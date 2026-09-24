@@ -21,10 +21,10 @@ ROOT = Path(__file__).resolve().parent
 
 
 def main() -> int:
-    print('repo-surgeon: which mechanical migrations does this repo still need?', flush=True)
+    print("repo-surgeon: which mechanical migrations does this repo still need?", flush=True)
     print(flush=True)
     result = subprocess.run(
-        [sys.executable, "-m", 'repo_surgeon.cli', "scout", "."],
+        [sys.executable, "-m", "repo_surgeon.cli", "scout", "."],
         cwd=ROOT,
         env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "PYTHONIOENCODING": "utf-8"},
         check=False,
@@ -33,7 +33,7 @@ def main() -> int:
         return result.returncode
     print(flush=True)
     print("Point it at your own code with:", flush=True)
-    for line in ['repo-surgeon scout <repo>', 'repo-surgeon run <repo> --rule ospath']:
+    for line in ["repo-surgeon scout <repo>", "repo-surgeon run <repo> --rule ospath"]:
         print("    " + line, flush=True)
     return 0
 
