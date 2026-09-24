@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Zero runtime dependencies, so the matrix costs nothing and running it
+    # proves the claim rather than asserting it.
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --all-groups
+
+      - name: Lint
+        run: |
+          uv run ruff check src tests demo.py
+          uv run ruff format --check src tests demo.py
+
+      - name: Test
+        run: uv run pytest -q
+
+      # The demo runs the tool against this repository. It is the only check
+      # that exercises the CLI end to end, and it is how a reader first meets
+      # the project - so a demo that has stopped working should fail the build.
+      - name: Demo
+        run: uv run python demo.py
