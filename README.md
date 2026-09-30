@@ -2,14 +2,13 @@
 <p align="center"><i>A codebase migration tool whose output is the changes it refused</i></p>
 
 <p align="center">
-  <a href="#the-through-line">The through-line</a> &middot;
-  <a href="#the-result">The result</a> &middot;
+  <a href="#what-it-does">What it does</a> &middot;
+  <a href="#results">Results</a> &middot;
   <a href="docs/RESULTS.md">Full results</a> &middot;
   <a href="#the-ladder">The ladder</a> &middot;
   <a href="#what-it-refused">What it refused</a> &middot;
   <a href="#run-it">Run it</a> &middot;
-  <a href="#what-this-does-not-do">What it does NOT do</a> &middot;
-  <a href="#problems-hit-while-building-this">Problems hit</a>
+  <a href="#scope">Scope</a> 
 </p>
 
 <p align="center">
@@ -23,7 +22,7 @@
 
 ---
 
-## The through-line
+## What it does
 
 ```mermaid
 flowchart LR
@@ -52,7 +51,7 @@ neither reviews nor confidence are in this loop.
 > **A migration tool that reports what it changed is a diff. One that reports what it
 > refused, and why, is a reason to trust the diff.**
 
-## The result
+## Results
 
 Run against [`pypa/build`](https://github.com/pypa/build) - the official PyPA build
 frontend - migrating `os.path` to `pathlib`:
@@ -213,7 +212,7 @@ dependency, a graph definition and a store to do what [`ledger.py`](src/repo_sur
 does in thirty lines. The hard part of this tool is the verification, and no orchestration
 library helps with that.
 
-## What this does NOT do
+## Scope
 
 - **It does not touch methods.** A method needs an instance, and constructing one means
   running the code under test. Only module-level functions are in scope, and the scout
@@ -230,38 +229,6 @@ library helps with that.
 - **It cannot verify what it cannot import.** Missing third-party dependencies in the
   target show up as refusals, and those refusals say more about the environment than about
   the proposal. They are labelled separately for exactly that reason.
-
-## Problems hit while building this
-
-Five real bugs, all in the verification code rather than the model's output - which is the
-point: a bug in the thing that judges is how a wrong change lands quietly.
-
-- **The scout found zero sites in `pypa/build` and reported success.** `build` was in the
-  skip list as a build-artifact directory, and the target repo is *named* `build` - and
-  ships its package at `src/build/`. Silently finding nothing is the worst possible failure
-  for a tool like this. Artifact directories are now only skipped at the repo root and only
-  when they are not packages.
-- **Both versions shared a namespace, so recursion was measured wrong.** Defining old and
-  new in one module and keeping a reference to each means the old function's self-call
-  resolves through module globals to the *new* one, and the two appear to agree. Each
-  version now gets its own namespace. The test pins it: correct isolation gives 8 and 27
-  where a leak gives 18.
-- **Memory addresses were reported as behaviour changes.** `<Foo object at 0x7f...>` reprs
-  differently on every allocation, so any function returning a plain object was a
-  guaranteed "disagreement" - and the report presented the address as *proof*. A confident
-  false accusation is worse here than a missed finding.
-- **Then the fix for that left a second artefact.** With addresses normalised, the two
-  namespaces' different `__name__`s still leaked into reprs as `rs_old.Foo` vs `rs_new.Foo`.
-  Both namespaces now carry the same name; they are separate objects regardless.
-- **An annotation change landed.** Rung 2 compared parameter names and not their
-  annotations, so `archive: StrPath` became `archive: Union[str, Path]` and passed every
-  executable check. Caught by reading the applied diff, not by a test.
-
-Two more were fixed before they could mislead: the whole module header was carried with
-every function, so a function touching nothing but `os.path` was unverifiable whenever an
-unrelated import at the top of its file was missing; and the model's imports were spliced
-in at the function's line number, dropping `from pathlib import Path` into the middle of
-the module once per rewrite.
 
 ## Keywords
 
