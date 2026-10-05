@@ -29,10 +29,10 @@ proposed 10   landed 2 (20%)   REFUSED 8 (80%)
 |---|---|---|---|
 | `build_package` | **landed** | `-` | differential 38 of 40 inputs exercised it, all agree |
 | `build_package_via_sdist` | refused | `differential` | inconclusive: all 40 argument sets raised on both sides |
-| `_build_metadata` | refused | `differential` | load_error: new: ImportError: cannot import name 'ConfigSettings' from 'typing' (C:\Users\dell\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-n |
+| `_build_metadata` | refused | `differential` | load_error: new: ImportError: cannot import name 'ConfigSettings' from 'typing' (<python 3.14 stdlib>) |
 | `main` | refused | `differential` | inconclusive: all 24 argument sets raised on both sides |
-| `_write_report` | refused | `differential` | load_error: new: ImportError: cannot import name 'StrPath' from 'typing' (C:\Users\dell\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\Lib |
-| `_validate_sdist_archive` | refused | `differential` | load_error: new: ImportError: cannot import name 'StrPath' from 'typing' (C:\Users\dell\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\Lib |
+| `_write_report` | refused | `differential` | load_error: new: ImportError: cannot import name 'StrPath' from 'typing' (<python 3.14 stdlib>) |
+| `_validate_sdist_archive` | refused | `differential` | load_error: new: ImportError: cannot import name 'StrPath' from 'typing' (<python 3.14 stdlib>) |
 | `_extract_sdist` | refused | `signature` | parameter annotations: ('StrPath', 'str', 'StrPath \| None') -> ('Union[str, Path]', 'str', 'Union[str, Path, None]') |
 | `_validate_source_directory` | refused | `differential` | inconclusive: all 19 argument sets raised on both sides |
 | `_validate_backend_path` | **landed** | `-` | differential 20 of 37 inputs exercised it, all agree; mutation 1/1 mutants distinguished |
