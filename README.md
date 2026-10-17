@@ -1,60 +1,79 @@
-<h1 align="center">repo-surgeon (Python · ast · differential testing · mutation testing · Ollama)</h1>
-<p align="center"><i>A codebase migration tool whose output is the changes it refused</i></p>
+# repo-surgeon
 
-<p align="center">
-  <a href="#what-it-does">What it does</a> &middot;
-  <a href="#results">Results</a> &middot;
-  <a href="docs/RESULTS.md">Full results</a> &middot;
-  <a href="#the-ladder">The ladder</a> &middot;
-  <a href="#what-it-refused">What it refused</a> &middot;
-  <a href="#run-it">Run it</a> &middot;
-  <a href="#scope">Scope</a> 
-</p>
+![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<p align="center">
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python">
-  <img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen" alt="zero dependencies">
-  <img src="https://img.shields.io/badge/model-qwen2.5--coder%3A14b-orange" alt="model">
-  <img src="https://img.shields.io/badge/API%20keys-none%20required-success" alt="api keys">
-  <img src="https://img.shields.io/badge/tests-47-brightgreen" alt="tests">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
-</p>
-
----
+We built repo-surgeon to run mechanical codebase migrations (`os.path` to `pathlib`,
+`%`-formatting to f-strings) and refuse every change it cannot prove. It finds each site with
+`ast`, has a local model rewrite the enclosing function once, then checks the rewrite by
+execution: same signature, same results and exceptions on the same inputs, no weaker tests,
+and a suite no worse than before. Whatever fails a check is refused with the reason attached.
+It is for maintainers who want a migration they can review by reading the refusals, not by
+re-checking every hunk.
 
 ## What it does
 
-```mermaid
-flowchart LR
-    S["SCOUT<br/>ast, no model"] --> P["PROPOSE<br/>14B, one attempt"]
-    P --> V["VERIFY<br/>execution, no model"]
-    V -->|proved| A["APPLY"]
-    V -->|not proved| R["REFUSE<br/>+ the reason"]
+- **Scout** (no model, changes nothing): lists every migration site per function, so you can
+  see whether a repo is worth a model run.
+- **Propose**: one call to `qwen2.5-coder:14b` per function, one attempt, no retries.
+- **Verify** on a five-rung ladder; a verdict names the first rung a proposal failed:
 
-    style S fill:#16a34a,color:#fff
-    style V fill:#2563eb,color:#fff
-    style R fill:#b91c1c,color:#fff
+| | rung | what it establishes | model? |
+|---|---|---|:--:|
+| 1 | `syntax` | it parses | no |
+| 2 | `signature` | same name, parameters, defaults, decorators and annotations | no |
+| 3 | `differential` | old and new agree (results and exceptions) on every input tried | no |
+| 4 | `mutation` | the change did not make the function less distinguishable from a broken version | no |
+| 5 | `suite` | the repo's own tests are no worse than the baseline taken before any edit | no |
+
+- Inputs for rung 3 come from literals harvested from the target repo's own tests, from type
+  annotations, and from a corner pool per parameter name (`""`, `"a/b/"`, `".bashrc"`,
+  `"archive.tar.gz"`, `"/abs"`, `"a/../b"`), varied one at a time so a disagreement points
+  at one value.
+- If every argument set makes both versions raise, the result is `inconclusive` and refused.
+- **Apply** what was proved, edit the working tree in place, and write a resumable JSONL
+  ledger plus an evidence table of every verdict.
+
+## Sample input / output
+
+`repo-surgeon scout targets/build --rule ospath -v` on the vendored copy of
+[`pypa/build`](https://github.com/pypa/build):
+
+```
+targets\build
+  24 sites in 10 functions across 3 files
+
+  ospath                24  os.path calls -> pathlib.Path
+
+  src\build\__main__.py:327 build_package()  1 site(s): ospath
+  src\build\__main__.py:366 build_package_via_sdist()  2 site(s): ospath
+  src\build\__main__.py:429 _build_metadata()  2 site(s): ospath
+  src\build\__main__.py:702 main()  4 site(s): ospath
+  src\build\__main__.py:768 _write_report()  3 site(s): ospath
+  src\build\__main__.py:840 _validate_sdist_archive()  1 site(s): ospath
+  src\build\__main__.py:872 _extract_sdist()  2 site(s): ospath
+  src\build\_builder.py:74 _validate_source_directory()  5 site(s): ospath
+  src\build\_builder.py:156 _validate_backend_path()  2 site(s): ospath
+  src\build\env.py:492 _find_executable_and_scripts()  2 site(s): ospath
 ```
 
-Point it at a repository and a mechanical goal - *`os.path` → `pathlib`*, *`%`-formatting →
-f-strings* - and it finds every site, rewrites each enclosing function with a local model,
-and then tries to **prove the rewrite changed nothing**. Anything it cannot prove is
-refused, with the reason attached.
+`python demo.py` scouts this repository itself:
 
-The model appears exactly once, in the middle, and nothing it says is treated as evidence.
-That is a decision taken from measurements rather than taste. In
-[code-llm-lab](https://github.com/hammasbuilds/code-llm-lab) an LLM reviewing code ran at
-**44.8% precision** and flagged human-written reference solutions **38.8%** of the time; a
-model's stated confidence did not separate its correct answers from its wrong ones. So
-neither reviews nor confidence are in this loop.
+```
+repo-surgeon: which mechanical migrations does this repo still need?
 
-> **A migration tool that reports what it changed is a diff. One that reports what it
-> refused, and why, is a reason to trust the diff.**
+<clone>/repo-surgeon
+  26 sites in 11 functions across 3 files
+
+  ospath                24  os.path calls -> pathlib.Path
+  percent_format         2  %-formatting and .format() -> f-strings
+```
 
 ## Results
 
-Run against [`pypa/build`](https://github.com/pypa/build) - the official PyPA build
-frontend - migrating `os.path` to `pathlib`:
+One full run on `pypa/build`, migrating `os.path` to `pathlib` (details in
+[docs/RESULTS.md](docs/RESULTS.md)):
 
 ```
 24 sites in 10 functions across 3 files
@@ -66,8 +85,8 @@ refused at:
   differential      7   could not be proven equivalent
 ```
 
-**Two changes landed. Both are provably behaviour-identical on every input tried, and
-`build`'s own test suite is no worse than it was.**
+The two changes that landed, both behaviour-identical on every input tried, with `build`'s
+own suite no worse:
 
 ```diff
 - built.append(os.path.basename(out))
@@ -79,165 +98,59 @@ refused at:
 + if not resolved.is_dir():
 ```
 
-That first one is worth a second look. `os.path.basename` and `Path(...).name` are **not**
-equivalent in general - they disagree on a trailing slash, where `basename("a/b/")` is `""`
-and `Path("a/b/").name` is `"b"`. It landed because on this function's actual inputs, 38 of
-40 argument sets exercised it and all 38 agreed. The tool does not claim the rewrite is
-universally safe. It claims it was checked.
+`basename("a/b/")` is `""` while `Path("a/b/").name` is `"b"`, so the first rewrite is not
+safe in general; it landed because 38 of 40 argument sets exercised it on this function and
+all 38 agreed.
 
-## The ladder
+The eight refusals:
 
-Five rungs, ordered by cost. A verdict names the **first** rung a proposal failed.
+- **4 for lack of evidence**: `main`, `_validate_source_directory` and others take objects the
+  harness cannot build, so every argument set raised on both sides.
+- **3 invented imports**: the model wrote `from typing import StrPath`, but `StrPath` is
+  `build`'s own alias: `load_error: new: ImportError: cannot import name 'StrPath' from 'typing'`.
+- **1 interface change**: `_extract_sdist`'s `archive: StrPath` became `archive: Union[str, Path]`.
+  Every test still passes; rung 2 catches it because annotations are part of the signature.
 
-| | rung | what it establishes | model? |
-|---|---|---|:--:|
-| 1 | `syntax` | it parses | no |
-| 2 | `signature` | same name, parameters, defaults, decorators **and annotations** | no |
-| 3 | `differential` | old and new agree on every input tried | no |
-| 4 | `mutation` | the change did not make the function less distinguishable | no |
-| 5 | `suite` | the repo's own tests are no worse than the baseline | no |
+## Tech stack
 
-**Rung 3 is what the tool is for.** Both versions are loaded into separate module
-namespaces in one process and called on the same arguments. An exception counts as a
-result - a function that raised `KeyError` and now returns `None` has changed behaviour,
-and comparing only return values would call that agreement.
-
-The inputs come from three places, because this rung is only as good as the values it
-tries. Random values almost never satisfy a real function's preconditions, so both sides
-raise, the two "agree", and the change lands unverified. Type-driven values are tidy, and
-tidy values are exactly where `os.path` and `pathlib` agree. So:
-
-1. **Harvested from the target repo's own tests** - every literal, indexed by the keyword
-   it was passed as. Real values from the real domain. `build` gave up 113 of them.
-2. **Type-driven**, from the annotation where there is one.
-3. **A hand-written corner pool** per parameter name, which is where the known divergences
-   live: `""`, `"a/b/"`, `".bashrc"`, `"archive.tar.gz"`, `"/abs"`, `"a/../b"`.
-
-Arguments vary **one at a time** around a baseline, so a witness is immediately readable:
-exactly one value differs, so that value is the cause.
-
-**Rung 5 runs once**, over everything that cleared 1-4, against a baseline taken before
-anything was touched. A repo whose suite is already red is normal; blaming its existing
-failures on whatever change happened to be applied would make every hunk unlandable.
-
-### Agreement is not the same as proof
-
-If every argument set makes both sides raise, the arguments were wrong for that function
-and the run established nothing. That is reported as `inconclusive` and **refused**, not
-passed. The distinction is the whole disposition of the tool: treating "no evidence" as
-"no problem" is precisely how an unverified change lands.
-
-## What it refused
-
-The refusals are the product. On `build`, the eight break into three kinds:
-
-**Four were refused for lack of evidence.** `main`, `_validate_source_directory` and
-friends take objects the harness cannot construct, so every argument set raised on both
-sides. Nothing was proven either way, so nothing landed.
-
-**Three were the model inventing an import.** It wrote `from typing import StrPath` - and
-`StrPath` is `build`'s own type alias, not a name in `typing`. The proposal does not load
-at all:
-
-```
-load_error: new: ImportError: cannot import name 'StrPath' from 'typing'
-```
-
-**One changed the interface without changing the behaviour.** The rewrite of
-`_extract_sdist` turned `archive: StrPath` into `archive: Union[str, Path]`:
-
-```
-signature: parameter annotations:
-  ('StrPath', 'str', 'StrPath | None') -> ('Union[str, Path]', 'str', 'Union[str, Path, None]')
-```
-
-Nothing executable changes. Every test still passes. The package now promises its callers
-something different, type checkers downstream will disagree about it, and no test suite
-anywhere would have caught it. This one is the reason annotations are part of rung 2 -
-it slipped through an earlier version of this tool and landed.
+- Python 3.11+, zero runtime dependencies
+- `ast` for scouting and signature checks; both function versions loaded in separate module
+  namespaces for the differential rung; `subprocess` for the target's pytest
+- `urllib` to a local Ollama server running `qwen2.5-coder:14b`; no API key, no hosted call
+- pytest, ruff, hatchling, GitHub Actions (Ubuntu and Windows, Python 3.11 to 3.13)
 
 ## Run it
 
 ```bash
 git clone https://github.com/hammasbuilds/repo-surgeon
 cd repo-surgeon
-uv venv && uv pip install -e ".[dev]"
+uv sync --all-groups
 
-# free, no model, changes nothing - use it to see if a repo is worth the GPU time
-repo-surgeon scout /path/to/repo --rule ospath -v
+uv run python demo.py
 
-# propose, verify, apply
-repo-surgeon run /path/to/repo --rule ospath --out surgeon-out
+# free, no model, changes nothing
+uv run repo-surgeon scout /path/to/repo --rule ospath -v
+
+# propose, verify, apply (needs Ollama with qwen2.5-coder:14b)
+uv run repo-surgeon run /path/to/repo --rule ospath --out surgeon-out
 ```
 
-It edits the working tree in place and **refuses to start on a dirty checkout**, so
-`git diff` is the change and `git checkout .` is the undo.
+- `run` edits the working tree in place and refuses to start on a dirty checkout, so
+  `git diff` is the change and `git checkout .` is the undo.
+- It migrates module-level functions; methods are skipped, because building an instance
+  means running the code under test.
+- The target repo's own dependencies must be importable; otherwise its functions are refused
+  and labelled as environment refusals.
+- Rules: `ospath`, `percent_format` (in `src/repo_surgeon/rules/`).
 
-The target repo's own dependencies must be importable - a function whose module imports
-`pyproject_hooks` cannot be loaded, and therefore cannot be verified, without it.
+Code layout: `src/repo_surgeon/` holds `scout.py`, `propose.py`, `values.py`, `verify/`
+(one module per rung), `pipeline.py`, `ledger.py` and `report.py`.
 
-Needs Ollama with `qwen2.5-coder:14b`. No API key, no hosted call.
+Related: [pr-referee](https://github.com/hammasbuilds/pr-referee) uses the same engine to
+review pull requests; [code-llm-lab](https://github.com/hammasbuilds/code-llm-lab) measured
+LLM review at 44.8% precision, which is why the model's opinion is never used as evidence here.
 
-## Layout
+## Licence
 
-```
-src/repo_surgeon/
-  scout.py          find sites via ast; pick the enclosing function; prune its imports
-  propose.py        one model call per function, one attempt
-  values.py         argument sets: harvested, type-driven, and hand-written corners
-  verify/
-    statics.py      rungs 1-2: parses, and still the same function
-    differential.py rung 3: run both versions, compare results AND exceptions
-    mutation.py     rung 4: did the change make the function less distinguishable
-    suite.py        rung 5: the repo's own pytest, against a baseline
-    __init__.py     the ladder
-  pipeline.py       scout -> propose -> verify -> apply
-  ledger.py         resumable JSONL, one row per verdict
-  report.py         the evidence table
-  rules/            ospath, percent_format
-```
-
-## Stack
-
-`Python 3.11+` &middot; `ast` (stdlib) &middot; `subprocess` (stdlib) &middot;
-`urllib` (stdlib) &middot; `qwen2.5-coder:14b` via `Ollama` &middot; `pytest` &middot;
-`ruff`
-
-**Zero runtime dependencies**, and no orchestration framework. Both are deliberate.
-
-A tool whose entire claim is *"it proves things"* should not require you to trust a
-dependency tree in order to believe it. And the obvious framework choice here - LangGraph
-with a checkpointer, for the per-hunk state machine and resume - would have added a
-dependency, a graph definition and a store to do what [`ledger.py`](src/repo_surgeon/ledger.py)
-does in thirty lines. The hard part of this tool is the verification, and no orchestration
-library helps with that.
-
-## Scope
-
-- **It does not touch methods.** A method needs an instance, and constructing one means
-  running the code under test. Only module-level functions are in scope, and the scout
-  skips the rest rather than failing on them confusingly.
-- **It does not prove universal equivalence.** It proves agreement on the inputs it tried.
-  Those inputs are chosen to include the known divergences, but "checked" is a weaker and
-  more honest claim than "safe".
-- **It does not retry.** A refused proposal stays refused. `code-llm-lab` measured
-  self-debug loops capturing 100% of their gain in the first two rounds, and 93.3% of
-  first-attempt failures surviving both repair and rewrite - so a second attempt at the
-  same function buys close to nothing and costs a full generation.
-- **One repo, one rule, ten functions.** That is a demonstration, not a study. The tool is
-  built to be pointed at more; the numbers above are from one run on one target.
-- **It cannot verify what it cannot import.** Missing third-party dependencies in the
-  target show up as refusals, and those refusals say more about the environment than about
-  the proposal. They are labelled separately for exactly that reason.
-
-## Keywords
-
-codemod &middot; codebase migration &middot; automated refactoring &middot; differential
-testing &middot; mutation testing &middot; equivalence checking &middot; AST &middot;
-pathlib migration &middot; f-string migration &middot; LLM code generation &middot; local
-LLM &middot; Ollama &middot; qwen2.5-coder &middot; verified code transformation &middot;
-program equivalence &middot; regression detection
-
-## License
-
-MIT - see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). `targets/build` is a vendored copy of
+[pypa/build](https://github.com/pypa/build) (MIT).
